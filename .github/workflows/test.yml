@@ -1,0 +1,73 @@
+name: Build and Push Test
+
+on: pull_request
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - x86_64-apple-darwin
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-20.04
+          - target: x86_64-apple-darwin
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Linux
+        if: matrix.os == 'ubuntu-20.04'
+        run: |
+          docker run --rm -t \
+            -v $HOME/.cargo/registry/:/root/.cargo/registry \
+            -v "$(pwd)":/volume \
+            clux/muslrust:stable \
+            cargo build --release --bin warmonger --target ${{ matrix.target }}
+      - name: Prepare macOS
+        if: matrix.os == 'macos-13'
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          target: ${{ matrix.target }}
+          override: true
+      - name: Build macOS
+        if: matrix.os == 'macos-13'
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --release --bin warmonger --target ${{ matrix.target }}
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: warmonger-${{ matrix.os }}-amd64
+          path: target/${{ matrix.target }}/release/warmonger
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download
+        uses: actions/download-artifact@v3
+      - name: Layout
+        run: |
+          mv warmonger-ubuntu-20.04-amd64/warmonger ./warmonger-linux-amd64
+          mv warmonger-macos-13-amd64/warmonger ./warmonger-darwin-amd64
+          rm -rf warmonger-ubuntu-20.04-amd64 warmonger-macos-13-amd64
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          generate_release_notes: false
+          draft: true
+          fail_on_unmatched_files: true
+          files: |
+            warmonger-darwin-amd64
+            warmonger-linux-amd64
